@@ -8,21 +8,37 @@ target_wikipedia_link = "https://en.wikipedia.org/wiki/Philosophy"
 
 todo = asyncio.Queue()
 seen_urls = set()
+blacklisted_urls = ['https://en.wikipedia.org/wiki/Main_Page'] #Don't want to make it too easy
+url_parents = {}
 total_crawls = 0
+num_crawlers = 10
+found_target = asyncio.Event()
 
-async def add_links_to_crawl(soup: BeautifulSoup) -> None:
-    website_links = soup.find_all('a')
-    for link in website_links:
-        href = link.get('href')
-        if href and re.search(wikipedia_link_format, href):
-            url = f"https://en.wikipedia.org{href}"
-            if url not in seen_urls:
-                await todo.put(url)
-                seen_urls.add(url)
+async def add_links_to_crawl(soup: BeautifulSoup, parent_url) -> None:
+    paragraphs = soup.find_all('p')
+    for p in paragraphs:
+        website_links = p.find_all('a')
+        for link in website_links:
+            href = link.get('href')
+            if href and re.search(wikipedia_link_format, href):
+                url = f"https://en.wikipedia.org{href}"
+                if url not in seen_urls and url not in blacklisted_urls:
+                    await todo.put(url)
+                    seen_urls.add(url)
+                    url_parents[url] = parent_url
 
-
+async def crawler() -> None:
+    while True:
+        url = await todo.get()
+        try:
+            await crawl(url)
+        finally:
+            todo.task_done()
+            
 async def crawl(url: str) -> None:
     global total_crawls
+    if found_target.is_set():
+        return
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -31,10 +47,12 @@ async def crawl(url: str) -> None:
                     soup = BeautifulSoup(page, 'html.parser')
                     if url == target_wikipedia_link:
                         print("Found philosophy!")
+                        found_target.set()
+                        print_path_to_target(url)
                         return
 
                     seen_urls.add(url)
-                    await add_links_to_crawl(soup)
+                    await add_links_to_crawl(soup, url)
                     total_crawls += 1
                     print(f"Crawling: {url}")
                 else:
@@ -42,19 +60,30 @@ async def crawl(url: str) -> None:
     except Exception as e:
         print(f"Error crawling {url}: {e}")
 
-
+def print_path_to_target(target_url: str) -> None:
+    path = []
+    current = target_url
+    while current:
+        path.append(current)
+        current = url_parents.get(current)
+    path.reverse()
+    print("The path to philosphy:")
+    for step in path:
+        print(step)
+        
+        
 async def main():
-    start_url = "https://en.wikipedia.org/wiki/Old_School_RuneScape"
+    start_url = "https://en.wikipedia.org/wiki/Diogenes"
     await todo.put(start_url)
     seen_urls.add(start_url)
 
-    while True:
-        if not todo.empty():
-            next_url = await todo.get()
-            await crawl(next_url)
-        else:
-            await asyncio.sleep(1)
-
+    workers = [asyncio.create_task(crawler()) for _ in range(num_crawlers)]
+    
+    await todo.join()
+    
+    for w in workers:
+        w.cancel()
+        
 
 if __name__ == "__main__":
     asyncio.run(main())
