@@ -11,7 +11,7 @@ seen_urls = set()
 blacklisted_urls = ['https://en.wikipedia.org/wiki/Main_Page'] #Don't want to make it too easy
 url_parents = {}
 total_crawls = 0
-num_crawlers = 10
+num_crawlers = 25
 found_target = asyncio.Event()
 
 async def add_links_to_crawl(soup: BeautifulSoup, parent_url) -> None:
@@ -27,35 +27,36 @@ async def add_links_to_crawl(soup: BeautifulSoup, parent_url) -> None:
                     seen_urls.add(url)
                     url_parents[url] = parent_url
 
-async def crawler() -> None:
+async def crawler(session: aiohttp.ClientSession) -> None:
     while True:
         url = await todo.get()
         try:
-            await crawl(url)
+            await crawl(url, session)
         finally:
             todo.task_done()
             
-async def crawl(url: str) -> None:
+async def crawl(url: str, session: aiohttp.ClientSession) -> None:
     global total_crawls
     if found_target.is_set():
         return
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    page = await response.text()
-                    soup = BeautifulSoup(page, 'html.parser')
-                    if url == target_wikipedia_link:
-                        print("Found philosophy!")
-                        found_target.set()
-                        print_path_to_target(url)
-                        return
+        async with session.get(url) as response:
+            if response.status == 200:
+                page = await response.text()
+                soup = BeautifulSoup(page, 'html.parser')
+                if url == target_wikipedia_link:
+                    print("Found philosophy!")
+                    found_target.set()
+                    print_path_to_target(url)
+                    return
 
+                if not found_target.is_set():
                     seen_urls.add(url)
                     await add_links_to_crawl(soup, url)
                     total_crawls += 1
                     print(f"Crawling: {url}")
-                else:
+            else:
+                if not found_target.is_set():
                     print(f"Failed to crawl {url} (Status: {response.status})")
     except Exception as e:
         print(f"Error crawling {url}: {e}")
@@ -73,16 +74,15 @@ def print_path_to_target(target_url: str) -> None:
         
         
 async def main():
-    start_url = "https://en.wikipedia.org/wiki/Diogenes"
+    start_url = "https://en.wikipedia.org/wiki/Old_School_RuneScape"
     await todo.put(start_url)
     seen_urls.add(start_url)
-
-    workers = [asyncio.create_task(crawler()) for _ in range(num_crawlers)]
     
-    await todo.join()
-    
-    for w in workers:
-        w.cancel()
+    async with aiohttp.ClientSession() as session:
+        workers = [asyncio.create_task(crawler(session)) for _ in range(num_crawlers)]
+        await todo.join()
+        for w in workers:
+            w.cancel()
         
 
 if __name__ == "__main__":
