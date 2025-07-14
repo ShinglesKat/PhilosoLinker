@@ -5,6 +5,7 @@ import re
 
 wikipedia_link_format = r"/wiki/[A-Za-z0-9_]+"
 target_wikipedia_link = "https://en.wikipedia.org/wiki/Philosophy"
+start_url = "https://en.wikipedia.org/wiki/Dead_by_Daylight"
 
 todo = asyncio.Queue()
 seen_urls = set()
@@ -13,6 +14,8 @@ url_parents = {}
 total_crawls = 0
 num_crawlers = 25
 found_target = asyncio.Event()
+
+use_first_link_only = True
 
 async def add_links_to_crawl(soup: BeautifulSoup, parent_url) -> None:
     paragraphs = soup.find_all('p')
@@ -26,6 +29,10 @@ async def add_links_to_crawl(soup: BeautifulSoup, parent_url) -> None:
                     await todo.put(url)
                     seen_urls.add(url)
                     url_parents[url] = parent_url
+                    if use_first_link_only:
+                        return 
+        if use_first_link_only:
+            continue
 
 async def crawler(session: aiohttp.ClientSession) -> None:
     while True:
@@ -74,7 +81,6 @@ def print_path_to_target(target_url: str) -> None:
         
         
 async def main():
-    start_url = "https://en.wikipedia.org/wiki/Old_School_RuneScape"
     await todo.put(start_url)
     seen_urls.add(start_url)
     
